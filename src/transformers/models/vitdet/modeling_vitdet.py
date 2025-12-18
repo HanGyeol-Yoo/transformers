@@ -19,7 +19,6 @@ import math
 from typing import Optional, Union
 
 import torch
-import torch.utils.checkpoint
 from torch import nn
 
 from ...activations import ACT2FN
@@ -596,7 +595,7 @@ def caffe2_msra_fill(module: nn.Module) -> None:
 
 @auto_docstring
 class VitDetPreTrainedModel(PreTrainedModel):
-    config_class = VitDetConfig
+    config: VitDetConfig
     base_model_prefix = "vitdet"
     main_input_name = "pixel_values"
     supports_gradient_checkpointing = True

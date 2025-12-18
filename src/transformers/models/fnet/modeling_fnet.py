@@ -20,7 +20,6 @@ from functools import partial
 from typing import Optional, Union
 
 import torch
-import torch.utils.checkpoint
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
@@ -386,7 +385,7 @@ class FNetPreTrainingHeads(nn.Module):
 
 @auto_docstring
 class FNetPreTrainedModel(PreTrainedModel):
-    config_class = FNetConfig
+    config: FNetConfig
     base_model_prefix = "fnet"
     supports_gradient_checkpointing = True
 

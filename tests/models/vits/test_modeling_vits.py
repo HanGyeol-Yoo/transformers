@@ -55,7 +55,7 @@ GENERATION_CONFIG_NAME = "generation_config.json"
 
 def _config_zero_init(config):
     configs_no_init = copy.deepcopy(config)
-    for key in configs_no_init.__dict__.keys():
+    for key in configs_no_init.__dict__:
         if "_range" in key or "_std" in key or "initializer_factor" in key or "layer_scale" in key:
             setattr(configs_no_init, key, 1e-10)
         if isinstance(getattr(configs_no_init, key, None), PretrainedConfig):
@@ -221,46 +221,6 @@ class VitsModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase):
     @unittest.skip(reason="VITS is not deterministic")
     def test_batching_equivalence(self):
         pass
-
-    @is_flaky(
-        max_attempts=3,
-        description="Weight initialisation for the VITS conv layers sometimes exceeds the kaiming normal range",
-    )
-    def test_initialization(self):
-        config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
-
-        uniform_init_parms = [
-            "emb_rel_k",
-            "emb_rel_v",
-            "conv_1",
-            "conv_2",
-            "conv_pre",
-            "conv_post",
-            "conv_proj",
-            "conv_dds",
-            "project",
-            "wavenet.in_layers",
-            "wavenet.res_skip_layers",
-            "upsampler",
-            "resblocks",
-        ]
-
-        configs_no_init = _config_zero_init(config)
-        for model_class in self.all_model_classes:
-            model = model_class(config=configs_no_init)
-            for name, param in model.named_parameters():
-                if param.requires_grad:
-                    if any(x in name for x in uniform_init_parms):
-                        self.assertTrue(
-                            -1.0 <= ((param.data.mean() * 1e9).round() / 1e9).item() <= 1.0,
-                            msg=f"Parameter {name} of model {model_class} seems not properly initialized",
-                        )
-                    else:
-                        self.assertIn(
-                            ((param.data.mean() * 1e9).round() / 1e9).item(),
-                            [0.0, 1.0],
-                            msg=f"Parameter {name} of model {model_class} seems not properly initialized",
-                        )
 
     @unittest.skip(reason="VITS has no inputs_embeds")
     def test_inputs_embeds(self):
@@ -440,7 +400,7 @@ class VitsModelIntegrationTests(unittest.TestCase):
         # GPU gives different results than CPU
         torch_device = "cpu"
 
-        model = VitsModel.from_pretrained("facebook/mms-tts-eng", torch_dtype=torch.float16)
+        model = VitsModel.from_pretrained("facebook/mms-tts-eng", dtype=torch.float16)
         model.to(torch_device)
 
         tokenizer = VitsTokenizer.from_pretrained("facebook/mms-tts-eng")

@@ -13,6 +13,7 @@ specific language governing permissions and limitations under the License.
 rendered properly in your Markdown viewer.
 
 -->
+*This model was released on 2024-12-31 and added to Hugging Face Transformers on 2024-11-25.*
 
 <div style="float: right;">
     <div class="flex flex-wrap space-x-1">
@@ -42,7 +43,7 @@ from transformers import pipeline
 pipe = pipeline(
     task="text-generation",
     model="allenai/OLMo-2-0425-1B",
-    torch_dtype=torch.float16,
+    dtype=torch.float16,
     device=0,
 )
     
@@ -63,7 +64,7 @@ tokenizer = AutoTokenizer.from_pretrained(
 
 model = AutoModelForCausalLM.from_pretrained(
     "allenai/OLMo-2-0425-1B",
-    torch_dtype=torch.float16,
+    dtype=torch.float16,
     device_map="auto",
     attn_implementation="sdpa"
 )
@@ -86,6 +87,7 @@ echo -e "Plants create energy through a process known as" | transformers-cli run
 Quantization reduces the memory burden of large models by representing the weights in a lower precision. Refer to the [Quantization](../quantization/overview) overview for more available quantization backends.
 
 The example below uses [torchao](../quantization/torchao) to only quantize the weights to 4-bits.
+
 ```py
 
 #pip install torchao
@@ -104,7 +106,7 @@ tokenizer = AutoTokenizer.from_pretrained(
 model = AutoModelForCausalLM.from_pretrained(
     "allenai/OLMo-2-0425-1B",
     quantization_config=torchao_config,
-    torch_dtype=torch.bfloat16,
+    dtype=torch.bfloat16,
     device_map="auto",
     attn_implementation="sdpa"
 )
@@ -114,7 +116,6 @@ output = model.generate(**input_ids, max_length=50, cache_implementation="static
 print(tokenizer.decode(output[0], skip_special_tokens=True))
 
 ```
-
 
 ## Notes
 
@@ -127,7 +128,6 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
     
     model = AutoModelForCausalLM.from_pretrained("allenai/OLMo-2-0425-1B", revision="stage1-step140000-tokens294B")
     ```
-
 
 ## Olmo2Config
 

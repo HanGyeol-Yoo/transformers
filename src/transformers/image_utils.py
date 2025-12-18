@@ -21,7 +21,6 @@ from typing import Optional, Union
 
 import numpy as np
 import requests
-from packaging import version
 
 from .utils import (
     ExplicitEnum,
@@ -50,10 +49,7 @@ if is_vision_available():
     import PIL.Image
     import PIL.ImageOps
 
-    if version.parse(version.parse(PIL.__version__).base_version) >= version.parse("9.1.0"):
-        PILImageResampling = PIL.Image.Resampling
-    else:
-        PILImageResampling = PIL.Image
+    PILImageResampling = PIL.Image.Resampling
 
     if is_torchvision_available():
         from torchvision.transforms import InterpolationMode
@@ -79,7 +75,7 @@ logger = logging.get_logger(__name__)
 
 ImageInput = Union[
     "PIL.Image.Image", np.ndarray, "torch.Tensor", list["PIL.Image.Image"], list[np.ndarray], list["torch.Tensor"]
-]  # noqa
+]
 
 
 class ChannelDimension(ExplicitEnum):
@@ -123,7 +119,7 @@ def get_image_type(image):
         return ImageType.TENSORFLOW
     if is_jax_tensor(image):
         return ImageType.JAX
-    raise ValueError(f"Unrecognised image type {type(image)}")
+    raise ValueError(f"Unrecognized image type {type(image)}")
 
 
 def is_valid_image(img):
@@ -213,6 +209,7 @@ def make_list_of_images(images, expected_ndims: int = 3) -> list[ImageInput]:
 
 def make_flat_list_of_images(
     images: Union[list[ImageInput], ImageInput],
+    expected_ndims: int = 3,
 ) -> ImageInput:
     """
     Ensure that the output is a flat list of images. If the input is a single image, it is converted to a list of length 1.
@@ -220,6 +217,8 @@ def make_flat_list_of_images(
     Args:
         images (`Union[list[ImageInput], ImageInput]`):
             The input image.
+        expected_ndims (`int`, *optional*, defaults to 3):
+            The expected number of dimensions for a single input image.
     Returns:
         list: A list of images or a 4d array of images.
     """
@@ -227,20 +226,20 @@ def make_flat_list_of_images(
     if (
         isinstance(images, (list, tuple))
         and all(isinstance(images_i, (list, tuple)) for images_i in images)
-        and all(is_valid_list_of_images(images_i) for images_i in images)
+        and all(is_valid_list_of_images(images_i) or not images_i for images_i in images)
     ):
         return [img for img_list in images for img in img_list]
 
     if isinstance(images, (list, tuple)) and is_valid_list_of_images(images):
-        if is_pil_image(images[0]) or images[0].ndim == 3:
+        if is_pil_image(images[0]) or images[0].ndim == expected_ndims:
             return images
-        if images[0].ndim == 4:
+        if images[0].ndim == expected_ndims + 1:
             return [img for img_list in images for img in img_list]
 
     if is_valid_image(images):
-        if is_pil_image(images) or images.ndim == 3:
+        if is_pil_image(images) or images.ndim == expected_ndims:
             return [images]
-        if images.ndim == 4:
+        if images.ndim == expected_ndims + 1:
             return list(images)
 
     raise ValueError(f"Could not make a flat list of images from {images}")
@@ -248,12 +247,15 @@ def make_flat_list_of_images(
 
 def make_nested_list_of_images(
     images: Union[list[ImageInput], ImageInput],
-) -> ImageInput:
+    expected_ndims: int = 3,
+) -> list[ImageInput]:
     """
     Ensure that the output is a nested list of images.
     Args:
         images (`Union[list[ImageInput], ImageInput]`):
             The input image.
+        expected_ndims (`int`, *optional*, defaults to 3):
+            The expected number of dimensions for a single input image.
     Returns:
         list: A list of list of images or a list of 4d array of images.
     """
@@ -261,22 +263,22 @@ def make_nested_list_of_images(
     if (
         isinstance(images, (list, tuple))
         and all(isinstance(images_i, (list, tuple)) for images_i in images)
-        and all(is_valid_list_of_images(images_i) for images_i in images)
+        and all(is_valid_list_of_images(images_i) or not images_i for images_i in images)
     ):
         return images
 
     # If it's a list of images, it's a single batch, so convert it to a list of lists
     if isinstance(images, (list, tuple)) and is_valid_list_of_images(images):
-        if is_pil_image(images[0]) or images[0].ndim == 3:
+        if is_pil_image(images[0]) or images[0].ndim == expected_ndims:
             return [images]
-        if images[0].ndim == 4:
+        if images[0].ndim == expected_ndims + 1:
             return [list(image) for image in images]
 
     # If it's a single image, convert it to a list of lists
     if is_valid_image(images):
-        if is_pil_image(images) or images.ndim == 3:
+        if is_pil_image(images) or images.ndim == expected_ndims:
             return [[images]]
-        if images.ndim == 4:
+        if images.ndim == expected_ndims + 1:
             return [list(images)]
 
     raise ValueError("Invalid input type. Must be a single image, a list of images, or a list of batches of images.")
@@ -354,7 +356,7 @@ def get_channel_dimension_axis(
     raise ValueError(f"Unsupported data format: {input_data_format}")
 
 
-def get_image_size(image: np.ndarray, channel_dim: ChannelDimension = None) -> tuple[int, int]:
+def get_image_size(image: np.ndarray, channel_dim: Optional[ChannelDimension] = None) -> tuple[int, int]:
     """
     Returns the (height, width) dimensions of the image.
 
@@ -481,9 +483,7 @@ def load_image(image: Union[str, "PIL.Image.Image"], timeout: Optional[float] = 
                 raise ValueError(
                     f"Incorrect image source. Must be a valid URL starting with `http://` or `https://`, a valid path to an image file, or a base64 encoded string. Got {image}. Failed with {e}"
                 )
-    elif isinstance(image, PIL.Image.Image):
-        image = image
-    else:
+    elif not isinstance(image, PIL.Image.Image):
         raise TypeError(
             "Incorrect format used for image. Should be an url linking to an image, a base64 string, a local path, or a PIL image."
         )
@@ -520,12 +520,13 @@ def validate_preprocess_arguments(
     image_mean: Optional[Union[float, list[float]]] = None,
     image_std: Optional[Union[float, list[float]]] = None,
     do_pad: Optional[bool] = None,
-    size_divisibility: Optional[int] = None,
+    pad_size: Optional[Union[dict[str, int], int]] = None,
     do_center_crop: Optional[bool] = None,
     crop_size: Optional[dict[str, int]] = None,
     do_resize: Optional[bool] = None,
     size: Optional[dict[str, int]] = None,
     resample: Optional["PILImageResampling"] = None,
+    interpolation: Optional["InterpolationMode"] = None,
 ):
     """
     Checks validity of typically used arguments in an `ImageProcessor` `preprocess` method.
@@ -538,10 +539,15 @@ def validate_preprocess_arguments(
     if do_rescale and rescale_factor is None:
         raise ValueError("`rescale_factor` must be specified if `do_rescale` is `True`.")
 
-    if do_pad and size_divisibility is None:
-        # Here, size_divisor might be passed as the value of size
+    if do_pad and pad_size is None:
+        # Processors pad images using different args depending on the model, so the below check is pointless
+        # but we keep it for BC for now. TODO: remove in v5
+        # Usually padding can be called with:
+        #   - "pad_size/size" if we're padding to specific values
+        #   - "size_divisor" if we're padding to any value divisible by X
+        #   - "None" if we're padding to the maximum size image in batch
         raise ValueError(
-            "Depending on the model, `size_divisibility`, `size_divisor`, `pad_size` or `size` must be specified if `do_pad` is `True`."
+            "Depending on the model, `size_divisor` or `pad_size` or `size` must be specified if `do_pad` is `True`."
         )
 
     if do_normalize and (image_mean is None or image_std is None):
@@ -550,8 +556,13 @@ def validate_preprocess_arguments(
     if do_center_crop and crop_size is None:
         raise ValueError("`crop_size` must be specified if `do_center_crop` is `True`.")
 
-    if do_resize and (size is None or resample is None):
-        raise ValueError("`size` and `resample` must be specified if `do_resize` is `True`.")
+    if interpolation is not None and resample is not None:
+        raise ValueError(
+            "Only one of `interpolation` and `resample` should be specified, depending on image processor type."
+        )
+
+    if do_resize and not (size is not None and (resample is not None or interpolation is not None)):
+        raise ValueError("`size` and `resample/interpolation` must be specified if `do_resize` is `True`.")
 
 
 # In the future we can add a TF implementation here when we have TF models.
@@ -563,7 +574,7 @@ class ImageFeatureExtractionMixin:
     def _ensure_format_supported(self, image):
         if not isinstance(image, (PIL.Image.Image, np.ndarray)) and not is_torch_tensor(image):
             raise ValueError(
-                f"Got type {type(image)} which is not supported, only `PIL.Image.Image`, `np.array` and "
+                f"Got type {type(image)} which is not supported, only `PIL.Image.Image`, `np.ndarray` and "
                 "`torch.Tensor` are."
             )
 
@@ -827,7 +838,7 @@ class ImageFeatureExtractionMixin:
             return image.crop((left, top, right, bottom))
 
         # Check if image is in (n_channels, height, width) or (height, width, n_channels) format
-        channel_first = True if image.shape[0] in [1, 3] else False
+        channel_first = image.shape[0] in [1, 3]
 
         # Transpose (height, width, n_channels) format images
         if not channel_first:

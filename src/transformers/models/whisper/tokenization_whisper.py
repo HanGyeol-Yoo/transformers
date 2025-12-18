@@ -1007,7 +1007,7 @@ def _decode_asr(tokenizer, model_outputs, *, return_timestamps, return_language,
                 text = tokenizer.decode([token])
                 # Removing outer shell <|XX|>
                 text = text[2:-2]
-                language = LANGUAGES.get(text, None)
+                language = LANGUAGES.get(text)
                 if language is not None:
                     # 1/ Indeed some language
                     # TODO Handle when language is different from the previous
@@ -1099,11 +1099,11 @@ def _decode_asr(tokenizer, model_outputs, *, return_timestamps, return_language,
                 # merges later and decode into text.
                 current_tokens.append(token)
                 if return_timestamps == "word":
-                    start_time = round(token_timestamps[i] + time_offset, 2)
-                    if i + 1 < len(token_timestamps):
-                        end_time = round(token_timestamps[i + 1] + time_offset, 2)
+                    if i == 0:
+                        start_time = round(0.0 + time_offset, 2)
                     else:
-                        end_time = None  # should never happen
+                        start_time = round(token_timestamps[i - 1] + time_offset, 2)
+                    end_time = round(token_timestamps[i] + time_offset, 2)
                     current_token_timestamps.append((start_time, end_time))
 
         if "stride" in output:

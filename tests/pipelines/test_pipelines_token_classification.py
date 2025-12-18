@@ -67,7 +67,7 @@ class TokenClassificationPipelineTests(unittest.TestCase):
         image_processor=None,
         feature_extractor=None,
         processor=None,
-        torch_dtype="float32",
+        dtype="float32",
     ):
         token_classifier = TokenClassificationPipeline(
             model=model,
@@ -75,7 +75,7 @@ class TokenClassificationPipelineTests(unittest.TestCase):
             feature_extractor=feature_extractor,
             image_processor=image_processor,
             processor=processor,
-            torch_dtype=torch_dtype,
+            dtype=dtype,
         )
         return token_classifier, ["A simple string", "A simple string that is quite a bit longer"]
 
@@ -328,8 +328,10 @@ class TokenClassificationPipelineTests(unittest.TestCase):
         self.assertEqual(
             nested_simplify(output),
             [
-                {"entity_group": "PER", "score": ANY(float), "word": "Sarah", "start": 6, "end": 11},
-                {"entity_group": "LOC", "score": ANY(float), "word": "New York", "start": 21, "end": 29},
+                [
+                    {"entity_group": "PER", "score": ANY(float), "word": "Sarah", "start": 6, "end": 11},
+                    {"entity_group": "LOC", "score": ANY(float), "word": "New York", "start": 21, "end": 29},
+                ]
             ],
         )
 
@@ -349,8 +351,8 @@ class TokenClassificationPipelineTests(unittest.TestCase):
                     {"entity_group": "LOC", "score": ANY(float), "word": "New York", "start": 21, "end": 29},
                 ],
                 [
-                    {"entity_group": "PER", "score": ANY(float), "word": "Wolfgang", "start": 12, "end": 20},
-                    {"entity_group": "LOC", "score": ANY(float), "word": "Berlin", "start": 36, "end": 42},
+                    {"entity_group": "PER", "score": ANY(float), "word": "Wolfgang", "start": 11, "end": 19},
+                    {"entity_group": "LOC", "score": ANY(float), "word": "Berlin", "start": 34, "end": 40},
                 ],
             ],
         )
@@ -891,9 +893,7 @@ class TokenClassificationPipelineTests(unittest.TestCase):
     @require_torch
     def test_small_model_pt_fp16(self):
         model_name = "hf-internal-testing/tiny-bert-for-token-classification"
-        token_classifier = pipeline(
-            task="token-classification", model=model_name, framework="pt", torch_dtype=torch.float16
-        )
+        token_classifier = pipeline(task="token-classification", model=model_name, framework="pt", dtype=torch.float16)
         outputs = token_classifier("This is a test !")
         self.assertEqual(
             nested_simplify(outputs),
@@ -907,7 +907,7 @@ class TokenClassificationPipelineTests(unittest.TestCase):
     def test_small_model_pt_bf16(self):
         model_name = "hf-internal-testing/tiny-bert-for-token-classification"
         token_classifier = pipeline(
-            task="token-classification", model=model_name, framework="pt", torch_dtype=torch.bfloat16
+            task="token-classification", model=model_name, framework="pt", dtype=torch.bfloat16
         )
         outputs = token_classifier("This is a test !")
         self.assertEqual(

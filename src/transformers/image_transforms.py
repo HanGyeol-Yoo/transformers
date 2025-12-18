@@ -255,7 +255,7 @@ def get_size_with_aspect_ratio(image_size, size, max_size=None) -> tuple[int, in
 # Logic adapted from torchvision resizing logic: https://github.com/pytorch/vision/blob/511924c1ced4ce0461197e5caa64ce5b9e558aab/torchvision/transforms/functional.py#L366
 def get_resize_output_image_size(
     input_image: np.ndarray,
-    size: Union[int, tuple[int, int], list[int], tuple[int]],
+    size: Union[int, tuple[int, int], list[int], tuple[int, ...]],
     default_to_square: bool = True,
     max_size: Optional[int] = None,
     input_data_format: Optional[Union[str, ChannelDimension]] = None,
@@ -323,7 +323,7 @@ def get_resize_output_image_size(
 def resize(
     image: np.ndarray,
     size: tuple[int, int],
-    resample: "PILImageResampling" = None,
+    resample: Optional["PILImageResampling"] = None,
     reducing_gap: Optional[int] = None,
     data_format: Optional[ChannelDimension] = None,
     return_numpy: bool = True,
@@ -416,7 +416,7 @@ def normalize(
             The channel dimension format of the input image. If unset, will use the inferred format from the input.
     """
     if not isinstance(image, np.ndarray):
-        raise ValueError("image must be a numpy array")
+        raise TypeError("image must be a numpy array")
 
     if input_data_format is None:
         input_data_format = infer_channel_dimension_format(image)
@@ -748,7 +748,7 @@ def pad(
         elif isinstance(values, tuple) and len(values) == 2 and isinstance(values[0], int):
             values = (values, values)
         elif isinstance(values, tuple) and len(values) == 2 and isinstance(values[0], tuple):
-            values = values
+            pass
         else:
             raise ValueError(f"Unsupported format: {values}")
 
@@ -860,14 +860,14 @@ def _group_images_by_shape(nested_images, is_nested: bool = False):
 def _reconstruct_nested_structure(indices, processed_images):
     """Helper function to reconstruct a single level nested structure."""
     # Find the maximum outer index
-    max_outer_idx = max(idx[0] for idx in indices.keys())
+    max_outer_idx = max(idx[0] for idx in indices)
 
     # Create the outer list
     result = [None] * (max_outer_idx + 1)
 
     # Group indices by outer index
     nested_indices = defaultdict(list)
-    for i, j in indices.keys():
+    for i, j in indices:
         nested_indices[i].append(j)
 
     for i in range(max_outer_idx + 1):
@@ -912,7 +912,7 @@ def group_images_by_shape(
             - A dictionary with shape as key and list of images with that shape as value
             - A dictionary mapping original indices to (shape, index) tuples
     """
-    # If disable grouping is not explicitely provided, we favor disabling it if the images are on CPU, and enabling it otherwise.
+    # If disable grouping is not explicitly provided, we favor disabling it if the images are on CPU, and enabling it otherwise.
     if disable_grouping is None:
         device = images[0][0].device if is_nested else images[0].device
         disable_grouping = device == "cpu"
@@ -949,7 +949,7 @@ def reorder_images(
         grouped_images_index (dict[Union[int, tuple[int, int]], tuple[tuple[int, int], int]]):
             Dictionary mapping original indices to (shape, index) tuples.
         is_nested (bool, *optional*, defaults to False):
-            Whether the images are nested. Cannot be infered from the input, as some processing functions outputs nested images.
+            Whether the images are nested. Cannot be inferred from the input, as some processing functions outputs nested images.
             even with non nested images,e.g functions splitting images into patches. We thus can't deduce is_nested from the input.
 
 

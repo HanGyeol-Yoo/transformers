@@ -137,7 +137,7 @@ class TimmBackboneModelTest(ModelTesterMixin, BackboneTesterMixin, PipelineTeste
         pass
 
     @unittest.skip(reason="TimmBackbone initialization is managed on the timm side")
-    def test_initialization(self):
+    def test_can_init_all_missing_weights(self):
         pass
 
     @unittest.skip(reason="TimmBackbone models doesn't have inputs_embeds")
@@ -165,15 +165,11 @@ class TimmBackboneModelTest(ModelTesterMixin, BackboneTesterMixin, PipelineTeste
         pass
 
     @unittest.skip(reason="TimmBackbone uses its own `from_pretrained` without device_map support")
-    def test_can_load_with_meta_device_context_manager(self):
+    def test_cannot_load_with_meta_device_context_manager(self):
         pass
 
     @unittest.skip(reason="model weights aren't tied in TimmBackbone.")
     def test_tie_model_weights(self):
-        pass
-
-    @unittest.skip(reason="model weights aren't tied in TimmBackbone.")
-    def test_tied_model_weights_key_ignore(self):
         pass
 
     @unittest.skip(reason="Only checkpoints on timm can be loaded into TimmBackbone")

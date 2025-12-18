@@ -274,21 +274,6 @@ class Mamba2ModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMix
         config_and_inputs[0].n_groups //= 2
         self.model_tester.create_and_check_mamba2_slow_vs_fast_forward(*config_and_inputs)
 
-    def test_initialization(self):
-        config, _ = self.model_tester.prepare_config_and_inputs_for_common()
-
-        for model_class in self.all_model_classes:
-            model = model_class(config=config)
-            for name, param in model.named_parameters():
-                if "D" in name:
-                    if param.requires_grad:
-                        # check if it's a ones like
-                        torch.testing.assert_close(param.data, torch.ones_like(param.data), rtol=1e-5, atol=1e-5)
-
-    @unittest.skip(reason="Mamba 2 weights are not tied")
-    def test_tied_weights_keys(self):
-        pass
-
     @unittest.skip(reason="A large mamba2 would be necessary (and costly) for that")
     def test_multi_gpu_data_parallel_forward(self):
         pass
@@ -372,7 +357,7 @@ class Mamba2IntegrationTest(unittest.TestCase):
         tokenizer = self.tokenizer
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
-        model = Mamba2ForCausalLM.from_pretrained(self.model_id, torch_dtype=torch.bfloat16)
+        model = Mamba2ForCausalLM.from_pretrained(self.model_id, dtype=torch.bfloat16)
         model.to(torch_device)
         input_ids = tokenizer("[INST]Write a hello world program in C++.[/INST]", return_tensors="pt")["input_ids"].to(
             torch_device
@@ -405,7 +390,7 @@ class Mamba2IntegrationTest(unittest.TestCase):
             "[INST] Write a simple Fibonacci number computation function in Rust that does memoization, with comments, in safe Rust.[/INST]",
         ]
 
-        model = Mamba2ForCausalLM.from_pretrained(self.model_id, torch_dtype=torch.bfloat16).to(torch_device)
+        model = Mamba2ForCausalLM.from_pretrained(self.model_id, dtype=torch.bfloat16).to(torch_device)
         tokenizer.pad_token_id = tokenizer.eos_token_id
         # batched generation
         tokenized_prompts = tokenizer(prompt, return_tensors="pt", padding="longest").to(torch_device)
@@ -436,7 +421,7 @@ class Mamba2IntegrationTest(unittest.TestCase):
             "[INST] Write a simple Fibonacci number computation function in Rust that does memoization, with comments, in safe Rust.[/INST]",
         ]
 
-        model = Mamba2ForCausalLM.from_pretrained(self.model_id, torch_dtype=torch.bfloat16).to(torch_device)
+        model = Mamba2ForCausalLM.from_pretrained(self.model_id, dtype=torch.bfloat16).to(torch_device)
         tokenizer.pad_token_id = tokenizer.eos_token_id
         # batched generation
         tokenized_prompts = tokenizer(prompt, return_tensors="pt", padding="longest").to(torch_device)

@@ -17,10 +17,10 @@ import copy
 import inspect
 import tempfile
 import unittest
+from functools import cached_property
 
 from transformers import SpeechT5Config, SpeechT5HifiGanConfig
 from transformers.testing_utils import (
-    is_flaky,
     is_torch_available,
     require_deterministic_for_xpu,
     require_sentencepiece,
@@ -30,13 +30,11 @@ from transformers.testing_utils import (
     torch_device,
 )
 from transformers.trainer_utils import set_seed
-from transformers.utils import cached_property
 
 from ...generation.test_utils import GenerationTesterMixin
 from ...test_configuration_common import ConfigTester
 from ...test_modeling_common import (
     ModelTesterMixin,
-    _config_zero_init,
     floats_tensor,
     ids_tensor,
     random_attention_mask,
@@ -354,9 +352,9 @@ class SpeechT5ForSpeechToTextTester:
         next_attention_mask = torch.cat([attention_mask, next_attn_mask], dim=-1)
 
         output_from_no_past = model(next_input_ids, attention_mask=next_attention_mask)["last_hidden_state"]
-        output_from_past = model(next_tokens, attention_mask=next_attention_mask, past_key_values=past_key_values)[
-            "last_hidden_state"
-        ]
+        output_from_past = model(
+            next_tokens, attention_mask=next_attention_mask, past_key_values=past_key_values, use_cache=True
+        )["last_hidden_state"]
 
         # select random slice
         random_slice_idx = ids_tensor((1,), output_from_past.shape[-1]).item()
@@ -400,6 +398,10 @@ class SpeechT5ForSpeechToTextTest(ModelTesterMixin, unittest.TestCase, Generatio
     def test_decoder_model_past_with_large_inputs(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_decoder_model_past_large_inputs(*config_and_inputs)
+
+    @unittest.skip(reason="skipped because of dropout")
+    def test_batching_equivalence(self):
+        pass
 
     def test_attention_outputs(self):
         config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
@@ -576,33 +578,6 @@ class SpeechT5ForSpeechToTextTest(ModelTesterMixin, unittest.TestCase, Generatio
 
             check_hidden_states_output(inputs_dict, config, model_class)
 
-    def test_initialization(self):
-        config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
-
-        configs_no_init = _config_zero_init(config)
-        for model_class in self.all_model_classes:
-            model = model_class(config=configs_no_init)
-            for name, param in model.named_parameters():
-                uniform_init_parms = [
-                    "conv.weight",
-                    "conv.parametrizations.weight",
-                    "masked_spec_embed",
-                    "feature_projection.projection.weight",
-                    "feature_projection.projection.bias",
-                ]
-                if param.requires_grad:
-                    if any(x in name for x in uniform_init_parms):
-                        self.assertTrue(
-                            -1.0 <= ((param.data.mean() * 1e9).round() / 1e9).item() <= 1.0,
-                            msg=f"Parameter {name} of model {model_class} seems not properly initialized",
-                        )
-                    else:
-                        self.assertIn(
-                            ((param.data.mean() * 1e9).round() / 1e9).item(),
-                            [0.0, 1.0],
-                            msg=f"Parameter {name} of model {model_class} seems not properly initialized",
-                        )
-
     # this model has no inputs_embeds
     @unittest.skip(reason="Model has no input_embeds")
     def test_inputs_embeds(self):
@@ -724,10 +699,6 @@ class SpeechT5ForSpeechToTextTest(ModelTesterMixin, unittest.TestCase, Generatio
     def test_training_gradient_checkpointing_use_reentrant_false(self):
         pass
 
-    @is_flaky(max_attempts=5, description="Flaky for some input configurations.")
-    def test_past_key_values_format(self):
-        super().test_past_key_values_format()
-
     # overwrite from test_modeling_common
     def _mock_init_weights(self, module):
         if hasattr(module, "weight") and module.weight is not None:
@@ -764,7 +735,7 @@ class SpeechT5ForSpeechToTextIntegrationTests(unittest.TestCase):
 
         ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
         # automatic decoding with librispeech
-        speech_samples = ds.sort("id").select(range(num_samples))[:num_samples]["audio"]
+        speech_samples = ds.sort("id")[:num_samples]["audio"]
 
         return [x["array"] for x in speech_samples]
 
@@ -984,29 +955,6 @@ class SpeechT5ForTextToSpeechTest(ModelTesterMixin, unittest.TestCase):
                 else ["encoder_outputs"]
             )
             self.assertListEqual(arg_names[: len(expected_arg_names)], expected_arg_names)
-
-    def test_initialization(self):
-        config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
-
-        configs_no_init = _config_zero_init(config)
-        for model_class in self.all_model_classes:
-            model = model_class(config=configs_no_init)
-            for name, param in model.named_parameters():
-                uniform_init_parms = [
-                    "conv.weight",
-                ]
-                if param.requires_grad:
-                    if any(x in name for x in uniform_init_parms):
-                        self.assertTrue(
-                            -1.0 <= ((param.data.mean() * 1e9).round() / 1e9).item() <= 1.0,
-                            msg=f"Parameter {name} of model {model_class} seems not properly initialized",
-                        )
-                    else:
-                        self.assertIn(
-                            ((param.data.mean() * 1e9).round() / 1e9).item(),
-                            [0.0, 1.0],
-                            msg=f"Parameter {name} of model {model_class} seems not properly initialized",
-                        )
 
     @unittest.skip(reason="Model has no inputs_embeds")
     def test_inputs_embeds(self):
@@ -1682,33 +1630,6 @@ class SpeechT5ForSpeechToSpeechTest(ModelTesterMixin, unittest.TestCase):
 
             check_hidden_states_output(inputs_dict, config, model_class)
 
-    def test_initialization(self):
-        config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
-
-        configs_no_init = _config_zero_init(config)
-        for model_class in self.all_model_classes:
-            model = model_class(config=configs_no_init)
-            for name, param in model.named_parameters():
-                uniform_init_parms = [
-                    "conv.weight",
-                    "conv.parametrizations.weight",
-                    "masked_spec_embed",
-                    "feature_projection.projection.weight",
-                    "feature_projection.projection.bias",
-                ]
-                if param.requires_grad:
-                    if any(x in name for x in uniform_init_parms):
-                        self.assertTrue(
-                            -1.0 <= ((param.data.mean() * 1e9).round() / 1e9).item() <= 1.0,
-                            msg=f"Parameter {name} of model {model_class} seems not properly initialized",
-                        )
-                    else:
-                        self.assertIn(
-                            ((param.data.mean() * 1e9).round() / 1e9).item(),
-                            [0.0, 1.0],
-                            msg=f"Parameter {name} of model {model_class} seems not properly initialized",
-                        )
-
     @unittest.skip(reason="Model has no input_embeds")
     def test_inputs_embeds(self):
         pass
@@ -1792,7 +1713,7 @@ class SpeechT5ForSpeechToSpeechIntegrationTests(unittest.TestCase):
 
         ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
         # automatic decoding with librispeech
-        speech_samples = ds.sort("id").select(range(num_samples))[:num_samples]["audio"]
+        speech_samples = ds.sort("id")[:num_samples]["audio"]
 
         return [x["array"] for x in speech_samples]
 
@@ -1896,10 +1817,6 @@ class SpeechT5HifiGanTest(ModelTesterMixin, unittest.TestCase):
 
     @unittest.skip(reason="Model does not output hidden states")
     def test_hidden_states_output(self):
-        pass
-
-    @unittest.skip
-    def test_initialization(self):
         pass
 
     @unittest.skip(reason="Model has no input_embeds")

@@ -68,7 +68,7 @@ class AutomaticSpeechRecognitionPipelineTests(unittest.TestCase):
         image_processor=None,
         feature_extractor=None,
         processor=None,
-        torch_dtype="float32",
+        dtype="float32",
     ):
         if tokenizer is None:
             # Side effect of no Fast Tokenizer class for these model, so skipping
@@ -86,7 +86,7 @@ class AutomaticSpeechRecognitionPipelineTests(unittest.TestCase):
             feature_extractor=feature_extractor,
             image_processor=image_processor,
             processor=processor,
-            torch_dtype=torch_dtype,
+            dtype=dtype,
             **extra_kwargs,
         )
 
@@ -189,7 +189,7 @@ class AutomaticSpeechRecognitionPipelineTests(unittest.TestCase):
             model="facebook/s2t-small-mustc-en-fr-st",
             tokenizer="facebook/s2t-small-mustc-en-fr-st",
             framework="pt",
-            torch_dtype=torch.float16,
+            dtype=torch.float16,
         )
         waveform = np.tile(np.arange(1000, dtype=np.float32), 34)
         output = speech_recognizer(waveform)
@@ -210,7 +210,7 @@ class AutomaticSpeechRecognitionPipelineTests(unittest.TestCase):
             model="facebook/s2t-small-mustc-en-fr-st",
             tokenizer="facebook/s2t-small-mustc-en-fr-st",
             framework="pt",
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         )
         waveform = np.tile(np.arange(1000, dtype=np.float32), 34)
         output = speech_recognizer(waveform)
@@ -229,7 +229,7 @@ class AutomaticSpeechRecognitionPipelineTests(unittest.TestCase):
         speech_recognizer = pipeline(
             model="openai/whisper-tiny",
             device=torch_device,
-            torch_dtype=torch.float16,
+            dtype=torch.float16,
             max_new_tokens=5,
         )
         waveform = np.tile(np.arange(1000, dtype=np.float32), 34)
@@ -626,7 +626,8 @@ class AutomaticSpeechRecognitionPipelineTests(unittest.TestCase):
             {"text": " Nor is Mr. Quilters' manner less interesting than his matter."},
         ]
 
-        output = speech_recognizer(ds["audio"], batch_size=2)
+        audio_arrays = [x.get_all_samples().data for x in ds["audio"]]
+        output = speech_recognizer(audio_arrays, batch_size=2)
         self.assertEqual(output, EXPECTED_OUTPUT)
 
     @slow
@@ -1190,7 +1191,7 @@ class AutomaticSpeechRecognitionPipelineTests(unittest.TestCase):
             num_beams=1,
         )
 
-        transcription_non_ass = pipe(sample.copy(), generate_kwargs={"assistant_model": assistant_model})["text"]
+        transcription_non_ass = pipe(sample, generate_kwargs={"assistant_model": assistant_model})["text"]
         transcription_ass = pipe(sample)["text"]
 
         self.assertEqual(transcription_ass, transcription_non_ass)
@@ -1255,7 +1256,7 @@ class AutomaticSpeechRecognitionPipelineTests(unittest.TestCase):
             task="automatic-speech-recognition",
             model="facebook/wav2vec2-conformer-rope-large-960h-ft",
             device=torch_device,
-            torch_dtype=torch.float16,
+            dtype=torch.float16,
             framework="pt",
         )
 
@@ -1784,12 +1785,38 @@ class AutomaticSpeechRecognitionPipelineTests(unittest.TestCase):
         pipe = pipeline("automatic-speech-recognition", model=model, assistant_model=model)
 
         # We can run the pipeline
-        prompt = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation[:1]")["audio"]
-        _ = pipe(prompt)
+        prompt = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation[:1]")[0]["audio"]
+        _ = pipe(prompt, generate_kwargs={"num_beams": 1})
 
         # It is running assisted generation under the hood (e.g. flags incompatible with assisted gen will crash)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             _ = pipe(prompt, generate_kwargs={"num_beams": 2})
+
+    @require_torch
+    def test_pipeline_generation_kwargs(self):
+        """Tests that we can pass kwargs to `generate`, as in the text generation pipelines"""
+        model = "openai/whisper-tiny"
+        asr = pipeline("automatic-speech-recognition", model=model)
+        dataset = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation[:1]")
+
+        # BC: with `generate_kwargs` as a dictionary
+        res = asr(
+            dataset[0]["audio"],
+            generate_kwargs={"task": "transcribe", "max_new_tokens": 256},
+        )
+        self.assertEqual(
+            res["text"], " Mr. Quilter is the apostle of the middle classes and we are glad to welcome his gospel."
+        )
+
+        # New: kwargs forwarded to `generate`
+        res = asr(
+            dataset[0]["audio"],
+            max_new_tokens=256,
+            task="transcribe",
+        )
+        self.assertEqual(
+            res["text"], " Mr. Quilter is the apostle of the middle classes and we are glad to welcome his gospel."
+        )
 
 
 def require_ffmpeg(test_case):

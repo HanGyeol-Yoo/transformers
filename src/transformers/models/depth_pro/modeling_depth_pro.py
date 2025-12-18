@@ -299,7 +299,6 @@ class DepthProPatchEncoder(nn.Module):
         scaled_images_features = []
         for i in range(self.n_scaled_images):
             hidden_state = scaled_images_last_hidden_state[i]
-            batch_size = batch_size
             padding = torch_int(self.merge_padding_value * (1 / self.scaled_images_ratios[i]))
             output_height = base_height * 2**i
             output_width = base_width * 2**i
@@ -607,7 +606,7 @@ class DepthProNeck(nn.Module):
 
 @auto_docstring
 class DepthProPreTrainedModel(PreTrainedModel):
-    config_class = DepthProConfig
+    config: DepthProConfig
     base_model_prefix = "depth_pro"
     main_input_name = "pixel_values"
     supports_gradient_checkpointing = True
@@ -716,7 +715,7 @@ class DepthProPreActResidualLayer(nn.Module):
             Model configuration class defining the model architecture.
     """
 
-    def __init__(self, config):
+    def __init__(self, config: DepthProConfig):
         super().__init__()
 
         self.use_batch_norm = config.use_batch_norm_in_fusion_residual

@@ -289,7 +289,7 @@ class GroupViTConfig(PretrainedConfig):
 
             # Give a warning if the values exist in both `_text_config_dict` and `text_config` but being different.
             for key, value in _text_config_dict.items():
-                if key in text_config and value != text_config[key] and key not in ["transformers_version"]:
+                if key in text_config and value != text_config[key] and key != "transformers_version":
                     # If specified in `text_config_dict`
                     if key in text_config_dict:
                         message = (
@@ -321,7 +321,7 @@ class GroupViTConfig(PretrainedConfig):
 
             # Give a warning if the values exist in both `_vision_config_dict` and `vision_config` but being different.
             for key, value in _vision_config_dict.items():
-                if key in vision_config and value != vision_config[key] and key not in ["transformers_version"]:
+                if key in vision_config and value != vision_config[key] and key != "transformers_version":
                     # If specified in `vision_config_dict`
                     if key in vision_config_dict:
                         message = (
@@ -356,18 +356,6 @@ class GroupViTConfig(PretrainedConfig):
         self.initializer_range = 0.02
         self.initializer_factor = 1.0
         self.output_segmentation = False
-
-    @classmethod
-    def from_text_vision_configs(cls, text_config: GroupViTTextConfig, vision_config: GroupViTVisionConfig, **kwargs):
-        r"""
-        Instantiate a [`GroupViTConfig`] (or a derived class) from groupvit text model configuration and groupvit
-        vision model configuration.
-
-        Returns:
-            [`GroupViTConfig`]: An instance of a configuration object
-        """
-
-        return cls(text_config=text_config.to_dict(), vision_config=vision_config.to_dict(), **kwargs)
 
 
 class GroupViTOnnxConfig(OnnxConfig):

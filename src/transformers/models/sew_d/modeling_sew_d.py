@@ -21,7 +21,6 @@ from typing import Optional, Union
 
 import numpy as np
 import torch
-import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss, LayerNorm
 
@@ -510,7 +509,7 @@ class XSoftmax(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         (output,) = ctx.saved_tensors
-        inputGrad = softmax_backward_data(ctx, grad_output, output, ctx.dim, output)
+        inputGrad = softmax_backward_data(ctx, grad_output, output)
         return inputGrad, None, None
 
     @staticmethod
@@ -756,7 +755,6 @@ class DisentangledSelfAttention(nn.Module):
 
         if rel_att is not None:
             attention_scores = attention_scores + rel_att
-        attention_scores = attention_scores
         attention_scores = attention_scores.view(
             -1, self.num_attention_heads, attention_scores.size(-2), attention_scores.size(-1)
         )
@@ -1183,7 +1181,7 @@ class SEWDEncoder(nn.Module):
 
 @auto_docstring
 class SEWDPreTrainedModel(PreTrainedModel):
-    config_class = SEWDConfig
+    config: SEWDConfig
     base_model_prefix = "sew-d"
     main_input_name = "input_values"
     supports_gradient_checkpointing = True
@@ -1597,9 +1595,10 @@ class SEWDForSequenceClassification(SEWDPreTrainedModel):
         r"""
         input_values (`torch.FloatTensor` of shape `(batch_size, sequence_length)`):
             Float values of input raw speech waveform. Values can be obtained by loading a `.flac` or `.wav` audio file
-            into an array of type `list[float]` or a `numpy.ndarray`, *e.g.* via the soundfile library (`pip install
-            soundfile`). To prepare the array into `input_values`, the [`AutoProcessor`] should be used for padding and
-            conversion into a tensor of type `torch.FloatTensor`. See [`SEWDProcessor.__call__`] for details.
+            into an array of type `list[float]`, a `numpy.ndarray` or a `torch.Tensor`, *e.g.* via the torchcodec library
+            (`pip install torchcodec`) or the soundfile library (`pip install soundfile`).
+            To prepare the array into `input_values`, the [`AutoProcessor`] should be used for padding and conversion
+            into a tensor of type `torch.FloatTensor`. See [`SEWDProcessor.__call__`] for details.
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
             Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
             config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If

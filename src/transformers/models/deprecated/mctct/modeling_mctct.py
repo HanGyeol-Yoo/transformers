@@ -18,7 +18,6 @@ import math
 from typing import Optional, Union
 
 import torch
-import torch.utils.checkpoint
 from torch import nn
 
 from ....activations import ACT2FN
@@ -28,12 +27,8 @@ from ....integrations.fsdp import is_fsdp_managed_module
 from ....modeling_attn_mask_utils import _prepare_4d_attention_mask
 from ....modeling_layers import GradientCheckpointingLayer
 from ....modeling_outputs import BaseModelOutput, CausalLMOutput
-from ....modeling_utils import (
-    PreTrainedModel,
-    apply_chunking_to_forward,
-    find_pruneable_heads_and_indices,
-    prune_linear_layer,
-)
+from ....modeling_utils import PreTrainedModel
+from ....pytorch_utils import apply_chunking_to_forward, find_pruneable_heads_and_indices, prune_linear_layer
 from ....utils import logging
 from .configuration_mctct import MCTCTConfig
 
@@ -101,7 +96,7 @@ class MCTCTConv1dSubsampler(nn.Module):
     def forward(self, input_features):
         # NOTE: in reference to the NOTE in __init__, right now it just calculates padding as if
         # there will be just one conv layer.
-        padding = sum([size // 2 for size in self.kernel_size])  # (7, 7) -> (3, 3)
+        padding = sum(size // 2 for size in self.kernel_size)  # (7, 7) -> (3, 3)
 
         input_features = torch.nn.functional.pad(input_features, (0, 0, padding, padding), "constant", 0)
         hidden_states = input_features.transpose(1, 2).contiguous()  # -> Batch x Frame x Time
@@ -423,7 +418,7 @@ class MCTCTPreTrainedModel(PreTrainedModel):
     models.
     """
 
-    config_class = MCTCTConfig
+    config: MCTCTConfig
     base_model_prefix = "mctct"
     main_input_name = "input_features"
     supports_gradient_checkpointing = True
@@ -589,7 +584,7 @@ class MCTCTEncoder(MCTCTPreTrainedModel):
             # add LayerDrop (see https://huggingface.co/papers/1909.11556 for description)
             dropout_probability = torch.rand([])
 
-            skip_the_layer = True if self.training and (dropout_probability < self.config.layerdrop) else False
+            skip_the_layer = self.training and dropout_probability < self.config.layerdrop
             if not skip_the_layer or synced_gpus:
                 # under fsdp or deepspeed zero3 all gpus must run in sync
                 layer_outputs = encoder_layer(

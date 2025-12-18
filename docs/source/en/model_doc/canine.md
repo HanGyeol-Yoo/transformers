@@ -13,6 +13,7 @@ specific language governing permissions and limitations under the License.
 rendered properly in your Markdown viewer.
 
 -->
+*This model was released on 2021-03-11 and added to Hugging Face Transformers on 2021-06-30.*
 
 <div style="float: right;">
     <div class="flex flex-wrap space-x-1">
@@ -22,7 +23,7 @@ rendered properly in your Markdown viewer.
 
 # CANINE
 
-[CANINE](https://huggingface.co/papers/2103.06874) is a tokenization-free Transformer. It skips the usual step of splitting text into subwords or wordpieces and processes text character by character. That means it works directly with raw Unicode, making it especially useful for languages with complex or inconsistent tokenization rules and even noisy inputs like typos. Since working with characters means handling longer sequences, CANINE uses a smart trick. The model compresses the input early on (called downsampling) so the transformer doesn’t have to process every character individually. This keeps things fast and efficient.
+[CANINE](https://huggingface.co/papers/2103.06874) is a tokenization-free Transformer. It skips the usual step of splitting text into subwords or wordpieces and processes text character by character. That means it works directly with raw Unicode, making it especially useful for languages with complex or inconsistent tokenization rules and even noisy inputs like typos. Since working with characters means handling longer sequences, CANINE uses a smart trick. The model compresses the input early on (called downsampling) so the transformer doesn't have to process every character individually. This keeps things fast and efficient.
 
 You can find all the original CANINE checkpoints under the [Google](https://huggingface.co/google?search_models=canine) organization.
 
@@ -85,6 +86,7 @@ echo -e "Plant create energy through a process known as photosynthesis." | trans
     inputs = ["Life is like a box of chocolates.", "You never know what you gonna get."]
     encoding = tokenizer(inputs, padding="longest", truncation=True, return_tensors="pt")
     ```
+
 - CANINE is primarily designed to be fine-tuned on a downstream task. The pretrained model can be used for either masked language modeling or next sentence prediction.
 
 ## CanineConfig

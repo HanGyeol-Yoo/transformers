@@ -17,7 +17,6 @@
 from typing import Optional, Union
 
 import torch
-import torch.utils.checkpoint
 from torch import nn
 
 from ...modeling_outputs import DepthEstimatorOutput
@@ -180,7 +179,7 @@ class DepthAnythingFeatureFusionLayer(nn.Module):
 
 class DepthAnythingFeatureFusionStage(nn.Module):
     # Copied from transformers.models.dpt.modeling_dpt.DPTFeatureFusionStage.__init__ with DPT->DepthAnything
-    def __init__(self, config):
+    def __init__(self, config: DepthAnythingConfig):
         super().__init__()
         self.layers = nn.ModuleList()
         for _ in range(len(config.neck_hidden_sizes)):
@@ -211,7 +210,7 @@ class DepthAnythingFeatureFusionStage(nn.Module):
 # avoiding sdpa and flash_attn_2 support, it's done in the backend
 @auto_docstring
 class DepthAnythingPreTrainedModel(PreTrainedModel):
-    config_class = DepthAnythingConfig
+    config: DepthAnythingConfig
     base_model_prefix = "depth_anything"
     main_input_name = "pixel_values"
     supports_gradient_checkpointing = True

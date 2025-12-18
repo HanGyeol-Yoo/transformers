@@ -32,7 +32,7 @@ from ...image_utils import (
     get_image_size,
     infer_channel_dimension_format,
     is_scaled_image,
-    make_list_of_images,
+    make_flat_list_of_images,
     to_numpy_array,
     valid_images,
     validate_preprocess_arguments,
@@ -267,7 +267,7 @@ class SamImageProcessor(BaseImageProcessor):
         do_rescale: bool,
         do_normalize: bool,
         size: Optional[dict[str, int]] = None,
-        resample: PILImageResampling = None,
+        resample: Optional[PILImageResampling] = None,
         rescale_factor: Optional[float] = None,
         image_mean: Optional[Union[float, list[float]]] = None,
         image_std: Optional[Union[float, list[float]]] = None,
@@ -295,7 +295,7 @@ class SamImageProcessor(BaseImageProcessor):
         image: ImageInput,
         do_resize: Optional[bool] = None,
         size: Optional[dict[str, int]] = None,
-        resample: PILImageResampling = None,
+        resample: Optional[PILImageResampling] = None,
         do_rescale: Optional[bool] = None,
         rescale_factor: Optional[float] = None,
         do_normalize: Optional[bool] = None,
@@ -386,6 +386,11 @@ class SamImageProcessor(BaseImageProcessor):
         segmentation_map = segmentation_map.astype(np.int64)
 
         return segmentation_map, original_size
+
+    def __call__(self, images, segmentation_maps=None, **kwargs):
+        # Overrides the `__call__` method of the `BaseImageProcessor` class such that the images and segmentation maps can both
+        # be passed in as positional arguments.
+        return super().__call__(images, segmentation_maps=segmentation_maps, **kwargs)
 
     @filter_out_non_signature_kwargs()
     def preprocess(
@@ -489,7 +494,7 @@ class SamImageProcessor(BaseImageProcessor):
         mask_pad_size = get_size_dict(mask_pad_size, default_to_square=True)
         do_convert_rgb = do_convert_rgb if do_convert_rgb is not None else self.do_convert_rgb
 
-        images = make_list_of_images(images)
+        images = make_flat_list_of_images(images)
 
         if not valid_images(images):
             raise ValueError(
@@ -498,7 +503,7 @@ class SamImageProcessor(BaseImageProcessor):
             )
 
         if segmentation_maps is not None:
-            segmentation_maps = make_list_of_images(segmentation_maps, expected_ndims=2)
+            segmentation_maps = make_flat_list_of_images(segmentation_maps, expected_ndims=2)
 
             if not valid_images(segmentation_maps):
                 raise ValueError(
@@ -511,8 +516,6 @@ class SamImageProcessor(BaseImageProcessor):
             do_normalize=do_normalize,
             image_mean=image_mean,
             image_std=image_std,
-            do_pad=do_pad,
-            size_divisibility=pad_size,  # Here _preprocess needs do_pad and pad_size.
             do_resize=do_resize,
             size=size,
             resample=resample,
@@ -663,7 +666,7 @@ class SamImageProcessor(BaseImageProcessor):
             if isinstance(masks[i], np.ndarray):
                 masks[i] = torch.from_numpy(masks[i])
             elif not isinstance(masks[i], torch.Tensor):
-                raise ValueError("Input masks should be a list of `torch.tensors` or a list of `np.ndarray`")
+                raise TypeError("Input masks should be a list of `torch.tensors` or a list of `np.ndarray`")
             interpolated_mask = F.interpolate(masks[i], target_image_size, mode="bilinear", align_corners=False)
             interpolated_mask = interpolated_mask[..., : reshaped_input_sizes[i][0], : reshaped_input_sizes[i][1]]
             interpolated_mask = F.interpolate(interpolated_mask, original_size, mode="bilinear", align_corners=False)
@@ -754,7 +757,7 @@ class SamImageProcessor(BaseImageProcessor):
         Generates a list of crop boxes of different sizes. Each layer has (2**i)**2 boxes for the ith layer.
 
         Args:
-            image (`np.array`):
+            image (`np.ndarray`):
                 Input original image
             target_size (`int`):
                 Target size of the resized image
@@ -828,7 +831,7 @@ class SamImageProcessor(BaseImageProcessor):
                 List of IoU scores.
             original_size (`tuple[int,int]`):
                 Size of the original image.
-            cropped_box_image (`np.array`):
+            cropped_box_image (`np.ndarray`):
                 The cropped image.
             pred_iou_thresh (`float`, *optional*, defaults to 0.88):
                 The threshold for the iou scores.
@@ -888,7 +891,7 @@ class SamImageProcessor(BaseImageProcessor):
                 List of IoU scores.
             original_size (`tuple[int,int]`):
                 Size of the original image.
-            cropped_box_image (`np.array`):
+            cropped_box_image (`np.ndarray`):
                 The cropped image.
             pred_iou_thresh (`float`, *optional*, defaults to 0.88):
                 The threshold for the iou scores.
@@ -1114,7 +1117,7 @@ def _generate_crop_boxes(
     """
 
     if isinstance(image, list):
-        raise ValueError("Only one image is allowed for crop generation.")
+        raise TypeError("Only one image is allowed for crop generation.")
     image = to_numpy_array(image)
     original_size = get_image_size(image, input_data_format)
 

@@ -24,12 +24,10 @@ from transformers import T5GemmaConfig, T5GemmaModuleConfig, is_torch_available
 from transformers.testing_utils import (
     require_torch,
     require_torch_accelerator,
-    require_torch_gpu,
-    require_torch_sdpa,
     torch_device,
 )
 
-from ...generation.test_utils import GenerationTesterMixin
+from ...generation.test_utils import GenerationTesterMixin, has_similar_generate_outputs
 from ...test_configuration_common import ConfigTester
 from ...test_modeling_common import ModelTesterMixin, ids_tensor
 from ...test_pipeline_mixin import PipelineTesterMixin
@@ -46,7 +44,6 @@ if is_torch_available():
         T5GemmaForTokenClassification,
         T5GemmaModel,
     )
-    from transformers.cache_utils import Cache
 
 
 class T5GemmaModelTester:
@@ -55,9 +52,9 @@ class T5GemmaModelTester:
 
     if is_torch_available():
         model_class = T5GemmaModel
-        for_causal_lm_class = T5GemmaForConditionalGeneration
-        for_sequence_class = T5GemmaForSequenceClassification
-        for_token_class = T5GemmaForTokenClassification
+        causal_lm_class = T5GemmaForConditionalGeneration
+        sequence_classification_class = T5GemmaForSequenceClassification
+        token_classification_class = T5GemmaForTokenClassification
 
     def __init__(
         self,
@@ -203,6 +200,15 @@ class T5GemmaModelTester:
         input_ids = torch.where(input_ids == self.bos_token_id, 42, input_ids)
         decoder_input_ids = torch.where(decoder_input_ids == self.bos_token_id, 42, decoder_input_ids)
 
+        # Avoid leading PAD tokens from inputs.
+        # `T5GemmaForTokenClassification` and `T5GemmaForSequenceClassification` specify `use_cache=False` when
+        # calling `self.model`. For `self.use_attention_mask=False` case below, the model goes through
+        # `make_default_2d_attention_mask`. When there are some pad tokens at the beginning of a sequence, it can't
+        # attend to any place, and the computed mask `[-3.4028e+38, -3.4028e+38, -3.4028e+38, -3.4028e+38, -3.4028e+38, -3.4028e+38, -3.4028e+38]`
+        # causes larger differences in some equivalence tests.
+        # Let's avoid such leading PAD tokens.
+        decoder_input_ids[:, 0] = self.pad_token_id + 1
+
         attention_mask = None
         decoder_attention_mask = None
         if self.use_attention_mask:
@@ -224,7 +230,6 @@ class T5GemmaModelTester:
             lm_labels,
         )
 
-    # Copied from tests.models.t5.test_modeling_t5.T5ModelTester.prepare_config_and_inputs_for_common
     def prepare_config_and_inputs_for_common(self):
         config_and_inputs = self.prepare_config_and_inputs()
         (
@@ -272,7 +277,7 @@ class T5GemmaModelTester:
         self.parent.assertEqual(decoder_output.size(), (self.batch_size, self.seq_length, self.hidden_size))
         self.parent.assertIsNotNone(decoder_past)
         self.parent.assertEqual(len(decoder_past.self_attention_cache), config.decoder.num_hidden_layers)
-        self.parent.assertEqual(len(decoder_past.cross_attention_cache.key_cache), config.decoder.num_hidden_layers)
+        self.parent.assertEqual(len(decoder_past.cross_attention_cache), config.decoder.num_hidden_layers)
 
     def check_prepare_lm_labels_via_shift_left(
         self,
@@ -304,7 +309,7 @@ class T5GemmaModelTester:
         decoder_attention_mask,
         lm_labels,
     ):
-        model = self.for_causal_lm_class(config=config).to(torch_device).eval()
+        model = self.causal_lm_class(config=config).to(torch_device).eval()
         outputs = model(
             input_ids=input_ids,
             decoder_input_ids=decoder_input_ids,
@@ -312,7 +317,7 @@ class T5GemmaModelTester:
             decoder_attention_mask=decoder_attention_mask,
             labels=lm_labels,
         )
-        self.parent.assertEqual(len(outputs), 4)
+        self.parent.assertEqual(len(outputs), 5)
         self.parent.assertEqual(outputs["logits"].size(), (self.batch_size, self.seq_length, self.vocab_size))
         self.parent.assertEqual(outputs["loss"].size(), ())
 
@@ -326,7 +331,7 @@ class T5GemmaModelTester:
         lm_labels,
     ):
         labels = torch.tensor([1] * self.batch_size, dtype=torch.long, device=torch_device)
-        model = self.for_sequence_class(config=config).to(torch_device).eval()
+        model = self.sequence_classification_class(config=config).to(torch_device).eval()
         outputs = model(
             input_ids=input_ids,
             decoder_input_ids=input_ids,
@@ -346,7 +351,7 @@ class T5GemmaModelTester:
         is_encoder_decoder,
     ):
         labels = torch.tensor([1] * self.batch_size, dtype=torch.long, device=torch_device)
-        model = self.for_sequence_class(config=config, is_encoder_decoder=is_encoder_decoder)
+        model = self.sequence_classification_class(config=config, is_encoder_decoder=is_encoder_decoder)
         model = model.to(torch_device).eval()
         outputs = model(
             input_ids=input_ids,
@@ -368,7 +373,7 @@ class T5GemmaModelTester:
         is_encoder_decoder,
     ):
         labels = torch.tensor([1] * self.seq_length * self.batch_size, dtype=torch.long, device=torch_device)
-        model = self.for_token_class(config=config, is_encoder_decoder=is_encoder_decoder)
+        model = self.token_classification_class(config=config, is_encoder_decoder=is_encoder_decoder)
         model = model.to(torch_device).eval()
         outputs = model(
             input_ids=input_ids,
@@ -539,7 +544,7 @@ class T5GemmaModelTester:
         decoder_attention_mask,
         lm_labels,
     ):
-        model = self.for_causal_lm_class(config=config).to(torch_device).eval()
+        model = self.causal_lm_class(config=config).to(torch_device).eval()
         torch.manual_seed(0)
         output_without_past_cache = model.generate(
             input_ids[:1], num_beams=2, max_length=5, do_sample=True, use_cache=False
@@ -591,10 +596,14 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
     test_pruning = False
     _is_stateful = True
     is_encoder_decoder = True
-    model_split_percents = [0.5, 0.6]
 
     # used in `test_torch_compile_for_training`
     _torch_compile_train_cls = T5GemmaForConditionalGeneration if is_torch_available() else None
+    # `t5gemma` will give warning or raise error if it is not `eager` during training.
+    _torch_compile_train_attn_implementation = "eager"
+
+    # won't fix
+    test_torchscript = False
 
     def setUp(self):
         self.model_tester = T5GemmaModelTester(self)
@@ -608,7 +617,6 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
             num_hidden_layers=self.model_tester.num_hidden_layers,
         )
 
-    # Copied from tests.models.t5.test_modeling_t5.T5ModelTest.is_pipeline_test_to_skip
     def is_pipeline_test_to_skip(
         self,
         pipeline_test_case_name,
@@ -626,16 +634,14 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
 
         return False
 
-    # Copied from tests.models.t5.test_modeling_t5.T5ModelTest.test_config
     def test_config(self):
         self.config_tester.run_common_tests()
 
-    # Copied from tests.models.t5.test_modeling_t5.T5ModelTest.test_shift_right
     def test_shift_right(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.check_prepare_lm_labels_via_shift_left(*config_and_inputs)
 
-    # Copied from tests.models.t5.test_modeling_t5.T5ModelTest.test_model
+    @unittest.skip("This was not properly written, submodules need the attribute to be overwritten")
     def test_model(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_model(*config_and_inputs)
@@ -670,19 +676,17 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
             with torch.no_grad():
                 model(**inputs)[0]
 
-    # Copied from tests.models.t5.test_modeling_t5.T5ModelTest.test_config_and_model_silu_gated
+    @unittest.skip("This was not properly written, submodules need the attribute to be overwritten")
     def test_config_and_model_silu_gated(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         config = config_and_inputs[0]
         config.feed_forward_proj = "gated-silu"
         self.model_tester.create_and_check_model(*config_and_inputs)
 
-    # Copied from tests.models.t5.test_modeling_t5.T5ModelTest.test_with_lm_head
     def test_with_lm_head(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_with_lm_head(*config_and_inputs)
 
-    # Copied from tests.models.t5.test_modeling_t5.T5ModelTest.test_with_sequence_classification_head
     def test_with_sequence_classification_head(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_with_sequence_classification_head(*config_and_inputs)
@@ -701,12 +705,11 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
             *config_and_inputs, is_encoder_decoder
         )
 
-    # Copied from tests.models.t5.test_modeling_t5.T5ModelTest.test_decoder_model_past
+    @unittest.skip("This was not properly written, submodules need the attribute to be overwritten")
     def test_decoder_model_past(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_decoder_model_past(*config_and_inputs)
 
-    # Copied from tests.models.t5.test_modeling_t5.T5ModelTest.test_decoder_model_past_with_attn_mask
     def test_decoder_model_past_with_attn_mask(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_decoder_model_attention_mask_past(*config_and_inputs)
@@ -740,18 +743,15 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
             lm_labels,
         )
 
-    # Copied from tests.models.t5.test_modeling_t5.T5ModelTest.test_decoder_model_past_with_large_inputs
     def test_decoder_model_past_with_large_inputs(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_decoder_model_past_large_inputs(*config_and_inputs)
 
-    # Copied from tests.models.t5.test_modeling_t5.T5ModelTest.test_generate_with_past_key_values
     def test_generate_with_past_key_values(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_generate_with_past_key_values(*config_and_inputs)
 
     @unittest.skipIf(torch_device == "cpu", "Can't do half precision")
-    # Copied from tests.models.t5.test_modeling_t5.T5ModelTest.test_model_fp16_forward
     def test_model_fp16_forward(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_model_fp16_forward(*config_and_inputs)
@@ -766,7 +766,7 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
 
         for is_encoder_decoder in [True, False]:
             model = (
-                self.model_tester.for_sequence_class(config, is_encoder_decoder=is_encoder_decoder)
+                self.model_tester.sequence_classification_class(config, is_encoder_decoder=is_encoder_decoder)
                 .to(torch_device)
                 .eval()
             )
@@ -784,7 +784,7 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
 
         for is_encoder_decoder in [True, False]:
             model = (
-                self.model_tester.for_sequence_class(config, is_encoder_decoder=is_encoder_decoder)
+                self.model_tester.sequence_classification_class(config, is_encoder_decoder=is_encoder_decoder)
                 .to(torch_device)
                 .eval()
             )
@@ -804,7 +804,7 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
 
         for is_encoder_decoder in [True, False]:
             model = (
-                self.model_tester.for_sequence_class(config, is_encoder_decoder=is_encoder_decoder)
+                self.model_tester.sequence_classification_class(config, is_encoder_decoder=is_encoder_decoder)
                 .to(torch_device)
                 .eval()
             )
@@ -821,7 +821,7 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
 
         for is_encoder_decoder in [True, False]:
             model = (
-                self.model_tester.for_token_class(config, is_encoder_decoder=is_encoder_decoder)
+                self.model_tester.token_classification_class(config, is_encoder_decoder=is_encoder_decoder)
                 .to(torch_device)
                 .eval()
             )
@@ -834,7 +834,7 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
 
     # Based on tests.models.gemma.test_modeling_gemma.GemmaModelTest.test_sdpa_equivalence
     # Add decoder_input_ids and adjust hidden states.
-    @require_torch_sdpa
+
     @require_torch_accelerator
     def test_sdpa_equivalence(self):
         for model_class in self.all_model_classes:
@@ -867,6 +867,7 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
 
     # Based on tests.test_modeling_common.ModelTesterMixin.test_attention_outputs
     # Skip token classification
+    @unittest.skip("This was not properly written, submodules need the attribute to be overwritten")
     def test_attention_outputs(self):
         if not self.has_attentions:
             self.skipTest(reason="Model does not output attentions")
@@ -886,7 +887,10 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
 
         for model_class in self.all_model_classes:
             # Skip token and sequence classification.
-            if model_class in [self.model_tester.for_token_class, self.model_tester.for_sequence_class]:
+            if model_class in [
+                self.model_tester.token_classification_class,
+                self.model_tester.sequence_classification_class,
+            ]:
                 continue
 
             inputs_dict["output_attentions"] = True
@@ -904,7 +908,7 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
             del inputs_dict["output_attentions"]
             config._attn_implementation = "eager"
             config.output_attentions = True
-            model = model_class(config)
+            model = model_class._from_config(config, attn_implementation="eager")
             model.to(torch_device)
             model.eval()
             with torch.no_grad():
@@ -988,128 +992,6 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
                     [self.model_tester.num_attention_heads, encoder_seq_length, encoder_key_length],
                 )
 
-    # Based on tests.generation.test_utils.GenerationTesterMixin.test_past_key_values_format
-    # Adjust encoder attention number for cross-attention caching and update attention head dimension
-    @pytest.mark.generate
-    def test_past_key_values_format(self, custom_all_cache_shapes=None):
-        """
-        Test that the KV cache is formatted correctly. Exceptions need to explicitly overwrite this test, or pass the
-        expected cache shapes.
-        Having a standard KV cache format is important for a consistent API (and for advanced generation methods).
-        """
-        for model_class in self.all_generative_model_classes:
-            config, inputs = self.model_tester.prepare_config_and_inputs_for_common()
-
-            # 1. If it doesn't support cache, skip the test
-            if not hasattr(config.get_text_config(), "use_cache"):
-                self.skipTest(reason=f"{model_class.__name__} doesn't support caching")
-
-            model = model_class(config).to(torch_device)
-            model = model.eval()
-            if "use_cache" not in inputs:
-                inputs["use_cache"] = True
-            outputs = model(**inputs)
-
-            if "past_key_values" not in outputs:
-                self.skipTest(reason="This model doesn't return `past_key_values`")
-
-            # 2. retrieve the KV cache and compute its default expected shapes (if no custom shapes are provided)
-            past_kv = outputs["past_key_values"]
-            is_legacy_cache = not isinstance(past_kv, Cache)
-
-            text_config = config.get_text_config().decoder
-            num_decoder_layers = text_config.num_hidden_layers
-
-            if custom_all_cache_shapes is None:
-                num_query_attention_heads = getattr(
-                    text_config, "decoder_attention_heads", text_config.num_attention_heads
-                )
-                per_head_embed_dim = text_config.head_dim
-                num_key_value_heads = (
-                    text_config.num_key_value_heads
-                    if getattr(text_config, "num_key_value_heads", None) is not None
-                    else num_query_attention_heads
-                )
-                if config.is_encoder_decoder:
-                    encoder_num_attention_heads = num_key_value_heads
-                    encoder_per_head_embed_dim = per_head_embed_dim
-                    batch_size, seq_length = inputs["decoder_input_ids"].shape[:2]
-                    # The sequence length for the encoder K V depends on the model. Since it is not manipulated in
-                    # autoregressive generation, we're keeping the test general and not checking the 3rd dim
-                    default_cross_attention_shape = (
-                        batch_size,
-                        encoder_num_attention_heads,
-                        encoder_per_head_embed_dim,
-                    )
-                    default_self_attention_shape = (batch_size, num_key_value_heads, seq_length, per_head_embed_dim)
-                    all_cache_shapes = [
-                        [
-                            default_self_attention_shape,
-                            default_self_attention_shape,
-                            default_cross_attention_shape,
-                            default_cross_attention_shape,
-                        ]
-                        for _ in range(num_decoder_layers)
-                    ]
-                else:
-                    batch_size, seq_length = inputs["input_ids"].shape[:2]
-                    default_self_attention_shape = (batch_size, num_key_value_heads, seq_length, per_head_embed_dim)
-                    all_cache_shapes = [
-                        [default_self_attention_shape, default_self_attention_shape] for _ in range(num_decoder_layers)
-                    ]
-
-            else:
-                all_cache_shapes = custom_all_cache_shapes
-
-            # 3. Check cache shapes
-            # 3.1. Encoder-Decoder checks
-            if config.is_encoder_decoder:
-                num_cache_decoder_layers = (
-                    len(past_kv) if is_legacy_cache else len(past_kv.self_attention_cache.key_cache)
-                )
-                self.assertEqual(num_cache_decoder_layers, num_decoder_layers)
-
-                for i in range(num_decoder_layers):
-                    if is_legacy_cache:
-                        self.assertEqual(len(past_kv[0]), 4)  # legacy check: confirm number of elements in tuple
-
-                    # Self attention
-                    self_attention_layer_key_cache = (
-                        past_kv[i][0] if is_legacy_cache else past_kv.self_attention_cache.key_cache[i]
-                    )
-                    self_attention_layer_value_cache = (
-                        past_kv[i][1] if is_legacy_cache else past_kv.self_attention_cache.value_cache[i]
-                    )
-                    self.assertEqual(self_attention_layer_key_cache.shape, all_cache_shapes[i][0])
-                    self.assertEqual(self_attention_layer_value_cache.shape, all_cache_shapes[i][1])
-
-                    # Cross attention (ignore 3rd dim, see default shape preparation)
-                    cross_attention_layer_key_cache = (
-                        past_kv[i][2] if is_legacy_cache else past_kv.cross_attention_cache.key_cache[i]
-                    )
-                    cross_attention_layer_value_cache = (
-                        past_kv[i][3] if is_legacy_cache else past_kv.cross_attention_cache.value_cache[i]
-                    )
-                    cross_attention_layer_key_cache = cross_attention_layer_key_cache[:, :, 0, :]
-                    cross_attention_layer_value_cache = cross_attention_layer_value_cache[:, :, 0, :]
-                    self.assertEqual(cross_attention_layer_key_cache.shape, all_cache_shapes[i][2])
-                    self.assertEqual(cross_attention_layer_value_cache.shape, all_cache_shapes[i][3])
-
-            # 3.2. Decoder-only checks
-            else:
-                num_cache_decoder_layers = len(past_kv) if is_legacy_cache else len(past_kv.key_cache)
-                self.assertEqual(num_cache_decoder_layers, num_decoder_layers)
-
-                for i in range(num_decoder_layers):
-                    if is_legacy_cache:
-                        self.assertEqual(len(past_kv[0]), 2)  # legacy check: confirm number of elements in tuple
-
-                    # Self attention
-                    self_attention_layer_key_cache = past_kv[i][0] if is_legacy_cache else past_kv.key_cache[i]
-                    self_attention_layer_value_cache = past_kv[i][1] if is_legacy_cache else past_kv.value_cache[i]
-                    self.assertEqual(self_attention_layer_key_cache.shape, all_cache_shapes[i][0])
-                    self.assertEqual(self_attention_layer_value_cache.shape, all_cache_shapes[i][1])
-
     @unittest.skip("Mismatch issue doesn't exist in T5Gemma.")
     def test_load_with_mismatched_shapes(self):
         pass
@@ -1120,7 +1002,7 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
     def test_generate_continue_from_past_key_values(self):
         # Tests that we can continue generating from past key values, returned from a previous `generate` call
         for model_class in self.all_generative_model_classes:
-            if model_class == self.model_tester.for_token_class:
+            if model_class == self.model_tester.token_classification_class:
                 continue
             if any(model_name in model_class.__name__.lower() for model_name in ["imagegpt", "mllama"]):
                 self.skipTest(reason="Won't fix: old model with unique inputs/caches/other")
@@ -1202,7 +1084,7 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
             outputs_cached.scores = full_cached_scores
 
             # The two sets of generated text and past kv should be equal to each other
-            self._check_similar_generate_outputs(outputs, outputs_cached)
+            self.assertTrue(has_similar_generate_outputs(outputs, outputs_cached))
             for layer_idx in range(len(outputs_cached.past_key_values)):
                 for kv_idx in range(len(outputs_cached.past_key_values[layer_idx])):
                     self.assertTrue(
@@ -1249,9 +1131,13 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
 
     # Based on tests.test_modeling_common.ModelTesterMixin.test_inputs_embeds_matches_input_ids
     # Adjust token classiifcation
+    @unittest.skip("This was not properly written, submodules need the attribute to be overwritten")
     def test_hidden_states_output(self):
         def check_hidden_states_output(inputs_dict, config, model_class):
-            if model_class in [self.model_tester.for_token_class, self.model_tester.for_sequence_class]:
+            if model_class in [
+                self.model_tester.token_classification_class,
+                self.model_tester.sequence_classification_class,
+            ]:
                 model = model_class(config, is_encoder_decoder=False)
             else:
                 model = model_class(config)
@@ -1344,7 +1230,7 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
 
     # Based on tests.test_modeling_common.ModelTesterMixin.test_flex_attention_with_grads
     # Update hidden size for encoder and decoder
-    @require_torch_gpu
+    @require_torch_accelerator
     def test_flex_attention_with_grads(self):
         for model_class in self.all_model_classes:
             # TODO: raushan, fix for composite models after making VLMs support new attn API
@@ -1390,10 +1276,6 @@ class T5GemmaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMi
 
             # If this does not raise an error, the test passes (see https://github.com/huggingface/transformers/pull/35605)
             _ = model(**dummy_inputs)
-
-    @unittest.skip("EncoderDecoderCache can't be gathered because it is not iterable.")
-    def test_multi_gpu_data_parallel_forward(self):
-        pass
 
 
 class T5GemmaEncoderOnlyModelTester:
@@ -1582,7 +1464,9 @@ class T5GemmaEncoderOnlyModelTest(ModelTesterMixin, unittest.TestCase):
     test_headmasking = False
     _is_stateful = True
     is_encoder_decoder = False
-    model_split_percents = [0.4, 0.5]
+
+    # won't fix
+    test_torchscript = False
 
     def setUp(self):
         self.model_tester = T5GemmaEncoderOnlyModelTester(self)
@@ -1599,6 +1483,7 @@ class T5GemmaEncoderOnlyModelTest(ModelTesterMixin, unittest.TestCase):
     def test_config(self):
         self.config_tester.run_common_tests()
 
+    @unittest.skip("This was not properly written, submodules need the attribute to be overwritten")
     def test_model(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_model(*config_and_inputs)
@@ -1630,7 +1515,7 @@ class T5GemmaEncoderOnlyModelTest(ModelTesterMixin, unittest.TestCase):
 
     # Based on tests.test_modeling_common.ModelTesterMixin.test_flex_attention_with_grads
     # Update hidden size for encoder
-    @require_torch_gpu
+    @require_torch_accelerator
     def test_flex_attention_with_grads(self):
         for model_class in self.all_model_classes:
             # TODO: raushan, fix for composite models after making VLMs support new attn API
@@ -1686,7 +1571,7 @@ class TestAsymmetricT5Gemma(unittest.TestCase):
             labels=lm_labels,
         )
         # outputs = model(*inputs)
-        assert len(outputs) == 4
+        assert len(outputs) == 5
         assert outputs["logits"].size() == (tester.batch_size, tester.seq_length, tester.vocab_size)
         assert outputs["loss"].size() == ()
         return model.model

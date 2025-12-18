@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from typing import Optional, Union
 
 import torch
-import torch.utils.checkpoint
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
@@ -572,7 +571,7 @@ class TvltPreTrainedModel(PreTrainedModel):
     models.
     """
 
-    config_class = TvltConfig
+    config: TvltConfig
     base_model_prefix = "tvlt"
     main_input_name = "pixel_values"
     supports_gradient_checkpointing = True

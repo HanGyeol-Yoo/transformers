@@ -122,13 +122,17 @@ class TableQuestionAnsweringPipeline(Pipeline):
     default_input_names = "table,query"
 
     _pipeline_calls_generate = True
+    _load_processor = False
+    _load_image_processor = False
+    _load_feature_extractor = False
+    _load_tokenizer = True
     # Make sure the docstring is updated when the default generation config is changed
     _default_generation_config = GenerationConfig(
         max_new_tokens=256,
     )
 
-    def __init__(self, args_parser=TableQuestionAnsweringArgumentHandler(), *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, args_parser=TableQuestionAnsweringArgumentHandler(), **kwargs):
+        super().__init__(**kwargs)
         self._args_parser = args_parser
 
         if self.framework == "tf":
@@ -139,8 +143,8 @@ class TableQuestionAnsweringPipeline(Pipeline):
             mapping.update(MODEL_FOR_SEQ_TO_SEQ_CAUSAL_LM_MAPPING_NAMES)
         self.check_model_type(mapping)
 
-        self.aggregate = bool(getattr(self.model.config, "aggregation_labels", None)) and bool(
-            getattr(self.model.config, "num_aggregation_labels", None)
+        self.aggregate = getattr(self.model.config, "aggregation_labels", None) and getattr(
+            self.model.config, "num_aggregation_labels", None
         )
         self.type = "tapas" if hasattr(self.model.config, "aggregation_labels") else None
 
@@ -263,7 +267,6 @@ class TableQuestionAnsweringPipeline(Pipeline):
                 )
 
                 coords_to_probs = collections.defaultdict(list)
-                token_type_ids_example = token_type_ids_example
                 for i, p in enumerate(tf.squeeze(probabilities).numpy().tolist()):
                     segment_id = token_type_ids_example[:, 0].tolist()[i]
                     col = token_type_ids_example[:, 1].tolist()[i] - 1
@@ -378,7 +381,7 @@ class TableQuestionAnsweringPipeline(Pipeline):
 
         return preprocess_params, forward_params, {}
 
-    def preprocess(self, pipeline_input, sequential=None, padding=True, truncation=None):
+    def preprocess(self, pipeline_input, padding=True, truncation=None):
         if truncation is None:
             if self.type == "tapas":
                 truncation = "drop_rows_to_fit"
@@ -447,7 +450,7 @@ class TableQuestionAnsweringPipeline(Pipeline):
 
                 answers.append(answer)
             if len(answer) == 0:
-                raise PipelineException("Empty answer")
+                raise PipelineException("Table question answering", self.model.name_or_path, "Empty answer")
         else:
             answers = [{"answer": answer} for answer in self.tokenizer.batch_decode(outputs, skip_special_tokens=True)]
 

@@ -19,7 +19,6 @@ from dataclasses import dataclass
 from typing import Optional, Union
 
 import torch
-import torch.utils.checkpoint
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
@@ -780,7 +779,7 @@ class EntityPredictionHead(nn.Module):
 
 @auto_docstring
 class LukePreTrainedModel(PreTrainedModel):
-    config_class = LukeConfig
+    config: LukeConfig
     base_model_prefix = "luke"
     supports_gradient_checkpointing = True
     _no_split_modules = ["LukeAttention", "LukeEntityEmbeddings"]

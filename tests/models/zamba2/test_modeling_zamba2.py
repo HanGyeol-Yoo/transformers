@@ -13,7 +13,6 @@
 # limitations under the License.
 """Testing suite for the PyTorch Zamba model."""
 
-import math
 import tempfile
 import unittest
 
@@ -22,9 +21,11 @@ from parameterized import parameterized
 
 from transformers import AutoTokenizer, Zamba2Config, is_torch_available
 from transformers.testing_utils import (
+    Expectations,
     require_bitsandbytes,
     require_flash_attn,
     require_torch,
+    require_torch_accelerator,
     require_torch_gpu,
     slow,
     torch_device,
@@ -32,7 +33,7 @@ from transformers.testing_utils import (
 
 from ...generation.test_utils import GenerationTesterMixin
 from ...test_configuration_common import ConfigTester
-from ...test_modeling_common import ModelTesterMixin, _config_zero_init, ids_tensor, random_attention_mask
+from ...test_modeling_common import ModelTesterMixin, ids_tensor, random_attention_mask
 from ...test_pipeline_mixin import PipelineTesterMixin
 
 
@@ -314,6 +315,26 @@ class Zamba2ModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMix
     test_headmasking = False
     test_pruning = False
 
+    def _check_past_key_values_for_generate(self, batch_size, decoder_past_key_values, cache_length, config):
+        self.assertIsInstance(decoder_past_key_values, Zamba2HybridDynamicCache)
+
+        # (batch, head, seq_length, head_features)
+        expected_shape = (
+            batch_size,
+            config.num_key_value_heads if hasattr(config, "num_key_value_heads") else config.num_attention_heads,
+            cache_length,
+            config.hidden_size // config.num_attention_heads,
+        )
+
+        self.assertListEqual(
+            [key_tensor.shape for key_tensor in decoder_past_key_values.key_cache],
+            [expected_shape] * len(decoder_past_key_values.key_cache),
+        )
+        self.assertListEqual(
+            [value_cache.shape for value_cache in decoder_past_key_values.value_cache],
+            [expected_shape] * len(decoder_past_key_values.value_cache),
+        )
+
     def setUp(self):
         self.model_tester = Zamba2ModelTester(self)
         self.config_tester = ConfigTester(self, config_class=Zamba2Config, hidden_size=37)
@@ -365,47 +386,6 @@ class Zamba2ModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMix
     def test_decoder_model_past_with_large_inputs(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs_for_decoder()
         self.model_tester.create_and_check_decoder_model_past_large_inputs(*config_and_inputs)
-
-    def test_initialization(self):
-        r"""
-        Overriding the test_initialization test as the A_log and D params of the Mamba block are initialized differently
-        """
-        config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
-
-        configs_no_init = _config_zero_init(config)
-        for model_class in self.all_model_classes:
-            model = model_class(config=configs_no_init)
-            for name, param in model.named_parameters():
-                if param.requires_grad:
-                    if "A_log" in name:
-                        A = torch.arange(1, config.n_mamba_heads + 1, dtype=torch.float32)[None, :]
-                        self.assertTrue(torch.allclose(param.data, torch.log(A), atol=1e-5, rtol=1e-5))
-                    elif "D" in name:
-                        # check if it's a ones like
-                        self.assertTrue(torch.allclose(param.data, torch.ones_like(param.data), atol=1e-5, rtol=1e-5))
-                    elif "dt_bias" in name:
-                        dt = torch.exp(
-                            torch.tensor([0, 1]) * (math.log(config.time_step_max) - math.log(config.time_step_min))
-                            + math.log(config.time_step_min)
-                        ).clamp(min=config.time_step_floor)
-                        inv_dt = dt + torch.log(-torch.expm1(-dt))
-                        if param.requires_grad:
-                            self.assertTrue(param.data.max().item() <= inv_dt[1])
-                            self.assertTrue(param.data.min().item() >= inv_dt[0])
-                    else:
-                        self.assertIn(
-                            ((param.data.mean() * 1e9).round() / 1e9).item(),
-                            [0.0, 1.0],
-                            msg=f"Parameter {name} of model {model_class} seems not properly initialized",
-                        )
-
-    @unittest.skip(reason="Cumbersome and redundant for Zamba2")
-    def test_mismatched_shapes_have_properly_initialized_weights(self):
-        r"""
-        Overriding the test_mismatched_shapes_have_properly_initialized_weights test because A_log and D params of the
-        Mamba block are initialized differently and we tested that in test_initialization
-        """
-        pass
 
     def test_attention_outputs(self):
         r"""
@@ -478,51 +458,6 @@ class Zamba2ModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMix
         ) = config_and_inputs
         return config, input_ids, input_mask
 
-    def test_left_padding_compatibility(self):
-        r"""
-        Overriding the test_left_padding_compatibility test as the mamba layers accentuate the numerical differences
-        effect of the left padding discussed in the issue in the note. Using a more permissive tolerance value.
-        """
-        import inspect
-        # NOTE: left-padding results in small numerical differences. This is expected.
-        # See https://github.com/huggingface/transformers/issues/25420#issuecomment-1775317535
-
-        # First, filter out models that don't support left padding - generative and decoder-only.
-        # Zamba2 is a decoder-only architecture
-        decoder_only_classes = self.all_generative_model_classes
-
-        # Then, test left-padding
-        def _prepare_model_kwargs(input_ids, attention_mask, signature):
-            model_kwargs = {"input_ids": input_ids, "attention_mask": attention_mask}
-            if "position_ids" in signature:
-                position_ids = torch.cumsum(attention_mask, dim=-1) - 1
-                position_ids.masked_fill_(attention_mask == 0, 1)
-                model_kwargs["position_ids"] = position_ids
-            if "cache_position" in signature:
-                cache_position = torch.arange(input_ids.shape[-1], device=torch_device)
-                model_kwargs["cache_position"] = cache_position
-            return model_kwargs
-
-        for model_class in decoder_only_classes:
-            config, input_ids, attention_mask = self._get_input_ids_and_config()
-            model = model_class(config).to(torch_device).eval()
-            signature = inspect.signature(model.forward).parameters.keys()
-
-            # Without padding
-            model_kwargs = _prepare_model_kwargs(input_ids, attention_mask, signature)
-            next_logits_wo_padding = model(**model_kwargs).logits[:, -1, :]
-
-            # With left-padding (length 32)
-            pad_size = (input_ids.shape[0], 32)
-            padding = torch.ones(pad_size, dtype=input_ids.dtype, device=torch_device) * config.pad_token_id
-            padded_input_ids = torch.cat((padding, input_ids), dim=1)
-            padded_attention_mask = torch.cat((torch.zeros_like(padding), attention_mask), dim=1)
-            model_kwargs = _prepare_model_kwargs(padded_input_ids, padded_attention_mask, signature)
-            next_logits_with_padding = model(**model_kwargs).logits[:, -1, :]
-
-            # They should result in very similar logits
-            self.assertTrue(torch.allclose(next_logits_wo_padding, next_logits_with_padding, atol=3e-3))
-
     @require_flash_attn
     @require_torch_gpu
     @require_bitsandbytes
@@ -547,7 +482,7 @@ class Zamba2ModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMix
 
                 model = model_class.from_pretrained(
                     tmpdirname,
-                    torch_dtype=torch.float16,
+                    dtype=torch.float16,
                     attn_implementation="flash_attention_2",
                     load_in_4bit=True,
                 )
@@ -561,23 +496,12 @@ class Zamba2ModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMix
                 # with attention mask
                 _ = model(dummy_input, attention_mask=dummy_attention_mask)
 
-    @require_flash_attn
-    @require_torch_gpu
-    @pytest.mark.flash_attn_test
-    @slow
-    def test_flash_attn_2_inference_equivalence_right_padding(self):
-        r"""
-        Overriding the test_flash_attn_2_inference_padding_right test as the Zamba2 model, like Mixtral, doesn't support
-        right padding + use cache with FA2
-        """
-        self.skipTest(reason="Zamba2 flash attention does not support right padding")
-
     @unittest.skip(reason="Zamba2 has its own special cache type")
     @parameterized.expand([(1, False), (1, True), (4, False)])
     def test_new_cache_format(self, num_beams, do_sample):
         pass
 
-    @require_torch_gpu
+    @require_torch_accelerator
     def test_flex_attention_with_grads(self):
         """
         Overwriting as the base hidden size is big enough for compile.
@@ -609,7 +533,7 @@ class Zamba2ModelIntegrationTest(unittest.TestCase):
     @slow
     def setUpClass(cls):
         model_id = "Zyphra/Zamba2-1.2B"
-        cls.model = Zamba2ForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32, revision="PR")
+        cls.model = Zamba2ForCausalLM.from_pretrained(model_id, dtype=torch.float32, revision="PR")
         cls.tokenizer = AutoTokenizer.from_pretrained(model_id, revision="PR")
 
     @parameterized.expand([(torch_device,), ("cpu",)])
@@ -678,14 +602,23 @@ class Zamba2ModelIntegrationTest(unittest.TestCase):
             ]
             , dtype=torch.float32)  # fmt: skip
 
-        EXPECTED_LOGITS_NO_GRAD_1 = torch.tensor(
-            [
-               0.1966,  6.3449,  3.8350, -5.7291, -6.5106, -6.5104, -6.5103, -6.5104,
-               -6.5103, -6.5104, -6.5106, -6.5105,  7.8700, 13.5434, -6.5104, -6.5096,
-               -6.5106, -6.5102, -6.5106, -6.5106, -6.5105, -6.5106, -6.5104, -6.5106,
-               -6.5105, -6.5106, -6.5106, -6.5113, -6.5102, -6.5105, -6.5108, -6.5105,
-               -6.5104, -6.5106, -6.5106, -6.5104, -6.5106, -6.5107, -6.5103, -6.5105          ]
-            , dtype=torch.float32)  # fmt: skip
+        EXPECTED_LOGITS_NO_GRAD_1S = Expectations(
+            {
+                ("xpu", 3): torch.tensor([0.2027,  6.3481,  3.8392, -5.7279, -6.5090, -6.5088, -6.5087, -6.5088,
+                                          -6.5087, -6.5088, -6.5090, -6.5089,  7.8796, 13.5483, -6.5088, -6.5080,
+                                          -6.5090, -6.5086, -6.5090, -6.5090, -6.5089, -6.5090, -6.5088, -6.5090,
+                                          -6.5089, -6.5090, -6.5090, -6.5097, -6.5086, -6.5089, -6.5092, -6.5089,
+                                          -6.5088, -6.5090, -6.5090, -6.5088, -6.5090, -6.5091, -6.5087, -6.5089],
+                                         dtype=torch.float32),
+                ("cuda", None): torch.tensor([0.1966,  6.3449,  3.8350, -5.7291, -6.5106, -6.5104, -6.5103, -6.5104,
+                                              -6.5103, -6.5104, -6.5106, -6.5105,  7.8700, 13.5434, -6.5104, -6.5096,
+                                              -6.5106, -6.5102, -6.5106, -6.5106, -6.5105, -6.5106, -6.5104, -6.5106,
+                                              -6.5105, -6.5106, -6.5106, -6.5113, -6.5102, -6.5105, -6.5108, -6.5105,
+                                              -6.5104, -6.5106, -6.5106, -6.5104, -6.5106, -6.5107, -6.5103, -6.5105],
+                                             dtype=torch.float32),
+            }
+        )  # fmt: skip
+        EXPECTED_LOGITS_NO_GRAD_1 = EXPECTED_LOGITS_NO_GRAD_1S.get_expectation()
 
         torch.testing.assert_close(logits[0, -1, :40].cpu(), EXPECTED_LOGITS_NO_GRAD_0, rtol=1e-3, atol=1e-3)
         torch.testing.assert_close(

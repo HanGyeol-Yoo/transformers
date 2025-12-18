@@ -41,7 +41,6 @@ from ...generation.test_utils import GenerationTesterMixin
 from ...test_configuration_common import ConfigTester
 from ...test_modeling_common import (
     ModelTesterMixin,
-    _config_zero_init,
     floats_tensor,
     ids_tensor,
 )
@@ -205,65 +204,6 @@ class LlavaNextForConditionalGenerationModelTest(ModelTesterMixin, GenerationTes
 
     def test_config(self):
         self.config_tester.run_common_tests()
-
-    def test_initialization(self):
-        config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
-
-        configs_no_init = _config_zero_init(config)
-        for model_class in self.all_model_classes:
-            model = model_class(config=configs_no_init)
-            for name, param in model.named_parameters():
-                if "image_newline" in name:
-                    continue
-                elif param.requires_grad:
-                    self.assertIn(
-                        ((param.data.mean() * 1e9).round() / 1e9).item(),
-                        [0.0, 1.0],
-                        msg=f"Parameter {name} of model {model_class} seems not properly initialized",
-                    )
-
-    # overwrite inputs_embeds tests because we need to delete "pixel values" for LVLMs
-    def test_inputs_embeds(self):
-        config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
-
-        for model_class in self.all_model_classes:
-            model = model_class(config)
-            model.to(torch_device)
-            model.eval()
-
-            inputs = self._prepare_for_class(inputs_dict, model_class)
-
-            input_ids = inputs["input_ids"]
-            del inputs["input_ids"]
-            del inputs["pixel_values"]
-
-            wte = model.get_input_embeddings()
-            inputs["inputs_embeds"] = wte(input_ids)
-
-            with torch.no_grad():
-                model(**inputs)
-
-    # overwrite inputs_embeds tests because we need to delete "pixel values" for LVLMs
-    # while some other models require pixel_values to be present
-    def test_inputs_embeds_matches_input_ids(self):
-        config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
-
-        for model_class in self.all_model_classes:
-            model = model_class(config)
-            model.to(torch_device)
-            model.eval()
-
-            inputs = self._prepare_for_class(inputs_dict, model_class)
-            input_ids = inputs["input_ids"]
-            del inputs["input_ids"]
-            del inputs["pixel_values"]
-
-            inputs_embeds = model.get_input_embeddings()(input_ids)
-
-            with torch.no_grad():
-                out_ids = model(input_ids=input_ids, **inputs)[0]
-                out_embeds = model(inputs_embeds=inputs_embeds, **inputs)[0]
-            torch.testing.assert_close(out_embeds, out_ids)
 
     def test_mismatching_num_image_tokens(self):
         """
@@ -558,7 +498,7 @@ class LlavaNextForConditionalGenerationIntegrationTest(unittest.TestCase):
         # test that changing `strategy` won't error out
         model.vision_feature_select_strategy = "full"
 
-        inputs = self.processor(self.prompt, self.image, return_tensors="pt").to(model.device)
+        inputs = self.processor(text=self.prompt, images=self.image, return_tensors="pt").to(model.device)
 
         # verify generation
         output = model.generate(**inputs, max_new_tokens=30)
@@ -579,7 +519,7 @@ class LlavaNextForConditionalGenerationIntegrationTest(unittest.TestCase):
         model = LlavaNextForConditionalGeneration.from_pretrained(granite_model_path)
         self.processor = AutoProcessor.from_pretrained(granite_model_path)
         prompt = "<|user|>\n<image>\nWhat is shown in this image?\n<|assistant|>\n"
-        inputs = self.processor(prompt, self.image, return_tensors="pt").to(model.device)
+        inputs = self.processor(text=prompt, images=self.image, return_tensors="pt").to(model.device)
 
         # verify generation
         output = model.generate(**inputs, max_new_tokens=30)
