@@ -273,14 +273,14 @@ class LlavaOnevisionModel(LlavaOnevisionPreTrainedModel):
 
     def __init__(self, config):
         super().__init__(config)
-        self.vision_tower = AutoModel.from_config(config.vision_config)
+        self.vision_tower = AutoModel.from_config(config.vision_config,trust_remote_code=True)
 
         self.multi_modal_projector = LlavaOnevisionMultiModalProjector(config)
         embed_std = 1 / math.sqrt(config.text_config.hidden_size)
         self.image_newline = nn.Parameter(torch.randn(config.text_config.hidden_size, dtype=self.dtype) * embed_std)
 
         self.vocab_size = config.text_config.vocab_size
-        self.language_model = AutoModel.from_config(config.text_config)
+        self.language_model = AutoModel.from_config(config.text_config,trust_remote_code=True)
         self.pad_token_id = self.config.pad_token_id if self.config.pad_token_id is not None else -1
         self.post_init()
 
